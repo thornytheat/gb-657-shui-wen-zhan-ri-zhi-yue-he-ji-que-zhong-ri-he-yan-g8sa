@@ -17,6 +17,7 @@ from ..m2_contract import service as m2_service
 from ..m3_quality import service as m3_service
 from ..m4_intervals import restore as restore_mod
 from ..m5_months import allocate as allocate_mod
+from ..m8_review import service as review_service
 from . import compare, history, resume
 
 
@@ -213,7 +214,10 @@ def run(settings, store, *, sample: str | None = None, mode: str = "full") -> di
         quarantine=quarantine,
         stages=stages,
         totals=totals,
-        manifest_json=manifest_json)
+        manifest_json=manifest_json,
+        conflict_groups=review_service.build_conflict_groups(
+            quality.get("conflicts") or []),
+        stamp=finished_at)
 
     batch.update(status="done", finished_at=finished_at)
     return {

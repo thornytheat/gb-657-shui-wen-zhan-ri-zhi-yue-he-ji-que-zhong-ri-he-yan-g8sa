@@ -55,7 +55,10 @@ def evaluate(records: list[dict],
     valid = [item for item in kept if item["read_type"] == "N"]
     estimate = [item for item in kept if item["read_type"] == "E"]
     return {"valid": valid, "estimate": estimate, "quarantine": quarantine,
-            "diagnostics": diagnostics}
+            "diagnostics": diagnostics,
+            # 同键冲突的两条原始记录原样带出：复核候选从这里落快照，
+            # 但原隔离结论（quarantine）保持不动。
+            "conflicts": conflicted}
 
 
 def summary(quarantine: list[dict]) -> dict:

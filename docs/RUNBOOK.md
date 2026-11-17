@@ -17,6 +17,8 @@ curl -sS http://localhost:18216/api/health
 1. 总览页选 `readings_dirty.csv`（脏样例，13 类问题），点「开始处理」。
 2. 阶段卡显示七段「进 / 出 / 隔离」；任一阶段失败可点该卡的「重试」。
 3. 读数诊断页看逐行诊断与隔离区，点「隔离区 CSV」下载证据。
+   同键冲突读数在「按批次复核」区逐组选定候选、写理由、点「保存裁决」；多组可分别保存，
+   再点「重建复核区间」，页面下半部并排显示原隔离用量与复核后用量（含逐月对照）。
 4. 区间还原页看翻转、换表末段、新表首读与标记，可点「重算区间」。
 5. 月度分摊页看每月合计、账单与尾差，可点「重算分摊」。
 6. 批次对账页看四账与运行清单；导出页下载五份文件。
@@ -35,7 +37,14 @@ curl -sS -o /tmp/monthly.csv http://localhost:18216/api/export/monthly.csv
 
 - **同输入重跑**：再点一次「开始处理」或 POST 同一 `sample`，命中批次键，返回同一 `batch_id`，行数与合计不变。
 - **强制重算**：POST `/api/batches/{batch_id}/retry`，用同一个 `sample` 重跑并覆盖该批次的行。
+  人工复核裁决不会因此丢失：源数据没变就保留，源摘要或候选证据变了才降为 `invalidated`。
 - **换样例**：下拉框里其余样例分别是干净、GBK 中文表头、末行截断、空文件、仅表头、全空行、表头缺列。
+- **复核同键冲突**：POST `/api/batches/{id}/review/decisions`
+  `{"group_key":"...","selected_lineno":58,"reason":"现场核验","expected_revision":0}`，
+  再 POST `/api/batches/{id}/review/rebuild`。`expected_revision` 不匹配返回 409 `E_STALE_DECISION`，
+  带上最新版本号重试即可；源文件改过则返回 422/409 `E_EVIDENCE_CHANGED`，需重新处理批次。
+- **复核证据**：GET `/api/batches/{id}/review` 看候选、裁决历史与用量对照；
+  GET `/api/batches/{id}/review/intervals.csv` 下载复核后区间。
 - **重跑测试**：`docker compose exec -T app python -m pytest -q`。
 - **清库**：`docker compose down -v` 删除命名卷；下次启动自动建表。
 

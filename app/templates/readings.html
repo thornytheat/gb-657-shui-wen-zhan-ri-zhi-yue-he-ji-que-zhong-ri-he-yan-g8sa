@@ -35,6 +35,154 @@
   <div class="kpi"><span class="kpi-label">分段</span><span class="kpi-value mono">{{ totals.segments }}</span></div>
 </section>
 
+{% set rv = review_page.comparison %}
+<section class="panel" id="review-panel" data-batch="{{ api_batch_id }}"
+         data-page="{{ page }}">
+  <div class="panel-head">
+    <h2 class="panel-title">按批次复核 · 同键冲突读数</h2>
+    <span class="badge badge-{{ 'ok' if rv and rv.review_status == 'ready' else ('bad' if rv and rv.review_status in ('needs_review', 'failed') else ('warn' if rv and rv.review_status == 'running' else 'plain')) }}">
+      {{ (rv.review_status if rv else 'idle')|review_status }}
+    </span>
+  </div>
+  {% if not review_page.groups %}
+  <p class="empty-line">本批次没有同键冲突组，无需复核。</p>
+  {% else %}
+  <div class="review-head">
+    <p class="review-note">
+      原隔离结论逐行保留（行号、原值、原因码都不改）；复核只追加裁决并单独重建区间，
+      不改原始候选、不改原隔离行，也不整批重跑。源数据变化后裁决自动失效，需重新核验再计算。
+    </p>
+    {% if review_page.evidence and not review_page.evidence.ok %}
+    <p class="review-alert" role="alert">
+      证据已变化：{% if review_page.evidence.source_changed %}源文件摘要与批次不一致{% endif %}
+      {% if review_page.evidence.stale_groups %}· 候选行证据变化的组 {{ review_page.evidence.stale_groups|length }} 个{% endif %}
+      。旧裁决已失效，请重新处理批次后再核验。
+    </p>
+    {% endif %}
+    <div class="review-actions">
+      <span class="panel-sub mono">冲突组 {{ rv.conflict_group_count }} · 已裁决 {{ rv.resolved_group_count }} · 待裁决 {{ rv.pending_group_count }} · 尝试 {{ rv.attempts }}</span>
+      <button class="btn btn-primary btn-sm" id="review-rebuild-button" type="button"
+              {% if rv.pending_group_count == rv.conflict_group_count %}disabled{% endif %}>重建复核区间</button>
+      <a class="btn btn-ghost btn-sm" href="/api/batches/{{ api_batch_id }}/review/intervals.csv">复核区间 CSV</a>
+    </div>
+    {% if review_page.review and review_page.review.status == 'running' %}
+    <p class="review-alert" role="alert">上次重建在执行中被中断（尝试 {{ review_page.review.attempts }}）；裁决与上次用量都在，点「重建复核区间」可继续。</p>
+    {% endif %}
+    {% if review_page.review and review_page.review.last_error and review_page.review.status != 'running' %}
+    <p class="review-alert" role="alert">上次复核失败：{{ review_page.review.last_error }}。裁决与上次用量已保留，可重试。</p>
+    {% endif %}
+  </div>
+
+  <div class="table-wrap">
+    <table class="table table-dense review-groups">
+      <thead>
+        <tr><th>复核组</th><th>表号</th><th>寄存器</th><th>抄表时间</th>
+          <th>候选（原行号 / 原值）</th><th>当前裁决</th><th>理由</th><th>用量对照</th><th>操作</th></tr>
+      </thead>
+      <tbody>
+        {% for group in review_page.groups %}
+        <tr data-group="{{ group.group_key }}"
+            data-evidence="{{ group.evidence_digest }}"
+            data-revision="{{ group.active.revision if group.active else 0 }}">
+          <td class="mono">{{ group.group_key }}</td>
+          <td class="mono">{{ group.meter_id }}</td>
+          <td>{{ group.register|reg }}</td>
+          <td class="mono">{{ group.read_at|localdt }}</td>
+          <td class="cell-candidates">
+            {% for cand in group.candidates %}
+            <label class="candidate{% if group.active and group.active.selected_lineno == cand.lineno %} is-selected{% endif %}">
+              <input type="radio" name="cand-{{ group.group_key }}"
+                     value="{{ cand.lineno }}"
+                     data-value="{{ cand.reading_norm }}"
+                     {% if group.active and group.active.selected_lineno == cand.lineno %}checked{% endif %}>
+              <span class="cand-line mono">行 {{ cand.lineno }}</span>
+              <span class="cand-value mono">{{ cand.reading_text }}</span>
+              <span class="cand-norm mono">= {{ cand.reading_norm|dec }} {{ cand.unit_norm }}</span>
+              {% if cand.note %}<span class="cand-note">{{ cand.note }}</span>{% endif %}
+              <span class="cand-q mono">{% for q in cand.quarantine %}{{ q.code }}{% if not loop.last %} / {% endif %}{% endfor %}</span>
+            </label>
+            {% endfor %}
+          </td>
+          <td>
+            {% if group.active %}
+            <span class="badge badge-{{ 'ok' if group.active_effective else 'bad' }}">{{ group.active.status|status }}</span>
+            <span class="mono">行 {{ group.active.selected_lineno }} · v{{ group.active.revision }}</span>
+            {% if not group.active_effective %}<span class="badge badge-bad">证据已变 · 需重核</span>{% endif %}
+            {% else %}
+            <span class="badge badge-plain">未裁决</span>
+            {% endif %}
+            {% if group.history and group.history|length > 1 %}
+            <details class="history">
+              <summary class="mono">历史 {{ group.history|length - 1 }}</summary>
+              <ul>
+                {% for old in group.history if old.status != 'active' %}
+                <li class="mono">{{ old.status|status }} · 行 {{ old.selected_lineno }} · v{{ old.revision }}
+                  · {{ old.invalid_reason or '改判' }}</li>
+                {% endfor %}
+              </ul>
+            </details>
+            {% endif %}
+          </td>
+          <td class="cell-note">{{ group.active.reason if group.active else '' }}</td>
+          <td class="num mono">
+            {% if group.active and group.active.usage_after_kwh is not none %}
+              {{ group.active.usage_before_kwh|kwh }} → {{ group.active.usage_after_kwh|kwh }}
+            {% else %}—{% endif %}
+          </td>
+          <td class="cell-actions">
+            <input class="input-reason" type="text" maxlength="200" placeholder="写核验理由"
+                   value="{{ group.active.reason if group.active else '' }}">
+            <button class="btn btn-primary btn-sm review-decide" type="button">保存裁决</button>
+            {% if group.active %}
+            <button class="btn btn-ghost btn-sm review-withdraw" type="button">撤回</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel-head review-compare-head">
+    <h2 class="panel-title">原隔离后用量 ↔ 复核后用量</h2>
+    <span class="panel-sub mono">单位 kWh · 主寄存器口径</span>
+  </div>
+  <table class="table table-compact compare-table">
+    <thead><tr><th>口径</th><th class="num">区间用量</th><th class="num">区间数</th><th class="num">隔离条数</th></tr></thead>
+    <tbody>
+      <tr><td>原隔离结论（原始批次）</td>
+        <td class="num mono">{{ rv.baseline_usage_kwh|kwh }}</td>
+        <td class="num mono">{{ rv.baseline_interval_count }}</td>
+        <td class="num mono">{{ rv.original_quarantine_total }}</td></tr>
+      <tr><td>复核后（{{ rv.recovered_rows }} 条冲突采信）</td>
+        <td class="num mono">{{ rv.reviewed_usage_kwh|kwh }}</td>
+        <td class="num mono">{{ rv.reviewed_interval_count if rv.reviewed_interval_count is not none else '—' }}</td>
+        <td class="num mono">{{ rv.reviewed_quarantine_total if rv.reviewed_quarantine_total is not none else '—' }}</td></tr>
+      <tr><td>差额</td>
+        <td class="num mono strong">{{ rv.usage_delta_kwh|kwh }}</td>
+        <td class="num mono">—</td><td class="num mono">—</td></tr>
+    </tbody>
+  </table>
+  {% if rv.month_rows %}
+  <div class="panel-head review-compare-head">
+    <h2 class="panel-title">逐月用量对照</h2>
+    <span class="panel-sub mono">主寄存器 · 总表优先</span>
+  </div>
+  <table class="table table-compact compare-table">
+    <thead><tr><th>月份</th><th class="num">原隔离</th><th class="num">复核后</th><th class="num">差额</th></tr></thead>
+    <tbody>
+      {% for row in rv.month_rows %}
+      <tr><td class="mono">{{ row.month }}</td>
+        <td class="num mono">{{ row.baseline|kwh }}</td>
+        <td class="num mono">{{ row.reviewed|kwh }}</td>
+        <td class="num mono">{{ row.delta|kwh }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% endif %}
+</section>
+
 <section class="panel">
   <div class="panel-head">
     <h2 class="panel-title">读数行</h2>
@@ -106,4 +254,5 @@
 {% block scripts %}
 <script src="/static/app.js" type="module"></script>
 <script src="/static/table.js" type="module"></script>
+<script src="/static/review.js" type="module"></script>
 {% endblock %}

@@ -7,10 +7,17 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 from decimal import Decimal
 
 from ..m2_contract import contract as contract_mod
 from ..m4_intervals import rollover
+
+
+def conflict_key(meter_id: str, register: str, read_at: str) -> str:
+    """同键冲突组的稳定标识：由业务键派生，不含行号，证据不变则组不变。"""
+    raw = "\x00".join((meter_id, register, read_at))
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def check_row(record: dict, meter: contract_mod.MeterContract) -> dict | None:

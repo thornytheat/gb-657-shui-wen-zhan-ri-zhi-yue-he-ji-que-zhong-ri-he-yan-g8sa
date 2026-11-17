@@ -8,6 +8,7 @@ from ...web import Ctx, get_ctx, render
 from ..m3_quality import quarantine as quarantine_mod
 from ..m6_batches import resume as resume_mod
 from ..m6_batches import service as batch_service
+from ..m8_review import handler as review_handler
 from . import service
 
 router = APIRouter(tags=["M1 读数采信"])
@@ -77,6 +78,7 @@ def page_readings(request: Request, batch_id: str | None = None,
     readings: list[dict] = []
     quarantine: list[dict] = []
     stages: list[dict] = []
+    review_context = review_handler.page_context(ctx, batch)
     if batch is not None:
         readings = ctx.store.load_readings(batch["batch_id"])
         quarantine = ctx.store.load_quarantine(batch["batch_id"])
@@ -85,4 +87,6 @@ def page_readings(request: Request, batch_id: str | None = None,
                   batch=batch, readings=readings, quarantine=quarantine,
                   stages=stages, samples=service.available_samples(ctx.settings),
                   distribution=quarantine_mod.distribution(quarantine),
-                  qsummary=quarantine_mod.summary(quarantine))
+                  qsummary=quarantine_mod.summary(quarantine),
+                  review_page=review_context,
+                  api_batch_id=batch["batch_id"] if batch else "")

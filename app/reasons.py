@@ -16,6 +16,10 @@ REASONS: dict[str, dict[str, str]] = {
     "E_SAMPLE_UNKNOWN": {"label": "样例不存在", "level": "error"},
     "E_CONTRACT_INVALID": {"label": "表计契约无效", "level": "error"},
     "E_BATCH_NOT_FOUND": {"label": "批次不存在", "level": "error"},
+    "E_DECISION_INVALID": {"label": "复核裁决不成立", "level": "error"},
+    "E_STALE_DECISION": {"label": "裁决版本已过期", "level": "error"},
+    "E_EVIDENCE_CHANGED": {"label": "源数据已变化，裁决失效", "level": "error"},
+    "E_REVIEW_FAILED": {"label": "复核重建失败", "level": "error"},
     "Q_COLUMN_COUNT": {"label": "列数与表头不一致", "level": "error"},
     "Q_TRUNCATED_ROW": {"label": "末行被截断", "level": "error"},
     "Q_MISSING_READING": {"label": "读数为空值哨兵", "level": "error"},
@@ -42,6 +46,8 @@ REASONS: dict[str, dict[str, str]] = {
     "K_UNIT_ASSUMED": {"label": "单位按契约补齐", "level": "info"},
     "K_UNIT_CONVERTED": {"label": "单位已折算", "level": "info"},
     "K_DUPLICATE_IDENTICAL": {"label": "重复行已合并", "level": "info"},
+    "K_CONFLICT_ADJUDICATED": {"label": "同键冲突已复核采信", "level": "info"},
+    "K_REVIEW_RANGE_REBUILT": {"label": "复核区间已重建", "level": "info"},
 }
 
 

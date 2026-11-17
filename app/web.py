@@ -31,10 +31,16 @@ STATUS_LABELS = {
     "valid": "有效", "estimate": "估抄", "quarantine": "隔离",
     "normal": "常规", "rollover": "满量翻转", "replacement_first": "新表首读",
     "replacement_last": "换表末读", "ok": "就绪", "skipped": "跳过",
+    "idle": "未复核", "ready": "已重建", "needs_review": "待重新核验",
+    "active": "生效", "superseded": "已被改判", "invalidated": "已失效",
 }
 METHOD_LABELS = {
     "normal": "常规", "rollover": "满量翻转",
     "replacement_first": "新表首读", "replacement_last": "换表末读",
+}
+REVIEW_STATUS_LABELS = {
+    "idle": "未复核", "running": "中断待恢复", "ready": "已重建",
+    "needs_review": "待重新核验", "failed": "重建失败",
 }
 
 
@@ -64,6 +70,7 @@ def setup(app) -> None:
     env.filters["method"] = lambda m: METHOD_LABELS.get(m, m or "—")
     env.filters["code"] = reasons.label
     env.filters["status"] = lambda s: STATUS_LABELS.get(s, s or "—")
+    env.filters["review_status"] = lambda s: REVIEW_STATUS_LABELS.get(s, s or "—")
     env.filters["dec"] = fmt_dec
     env.filters["unitnum"] = fmt_unit
     env.filters["days"] = fmt_days

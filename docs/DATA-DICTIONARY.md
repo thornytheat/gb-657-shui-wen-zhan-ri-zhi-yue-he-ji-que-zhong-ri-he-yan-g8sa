@@ -75,10 +75,25 @@
 
 ## 9 原因码
 
-文件级 `E_*`：`E_EMPTY_FILE`、`E_HEADER_ONLY`、`E_ALL_BLANK`、`E_HEADER_INVALID`、`E_DECODE`、`E_SAMPLE_UNKNOWN`、`E_CONTRACT_INVALID`、`E_BATCH_NOT_FOUND`。
+文件级 `E_*`：`E_EMPTY_FILE`、`E_HEADER_ONLY`、`E_ALL_BLANK`、`E_HEADER_INVALID`、`E_DECODE`、`E_SAMPLE_UNKNOWN`、`E_CONTRACT_INVALID`、`E_BATCH_NOT_FOUND`、`E_DECISION_INVALID`、`E_STALE_DECISION`、`E_EVIDENCE_CHANGED`、`E_REVIEW_FAILED`。
 
 行级 `Q_*`：`Q_COLUMN_COUNT`、`Q_TRUNCATED_ROW`、`Q_MISSING_READING`、`Q_BAD_READING`、`Q_BAD_TIME`、`Q_UNKNOWN_METER`、`Q_BAD_REGISTER`、`Q_BAD_UNIT`、`Q_BAD_READ_TYPE`、`Q_NEGATIVE_READING`、`Q_EXCEEDS_CAPACITY`、`Q_REVERSE_READING`、`Q_DUPLICATE_CONFLICT`、`Q_METER_RETIRED`。
 
-标记 `K_*`：`K_ROLLOVER`、`K_REPLACEMENT_FIRST`、`K_ESTIMATE_SKIPPED`、`K_CHARSET_FALLBACK`、`K_BOM_STRIPPED`、`K_SEGMENT_SPLIT`、`K_TRUNCATED_TAIL`、`K_TOU_ADJUSTED`、`K_BILL_ROUNDED`、`K_UNIT_ASSUMED`、`K_UNIT_CONVERTED`、`K_DUPLICATE_IDENTICAL`。
+标记 `K_*`：`K_ROLLOVER`、`K_REPLACEMENT_FIRST`、`K_ESTIMATE_SKIPPED`、`K_CHARSET_FALLBACK`、`K_BOM_STRIPPED`、`K_SEGMENT_SPLIT`、`K_TRUNCATED_TAIL`、`K_TOU_ADJUSTED`、`K_BILL_ROUNDED`、`K_UNIT_ASSUMED`、`K_UNIT_CONVERTED`、`K_DUPLICATE_IDENTICAL`、`K_CONFLICT_ADJUDICATED`、`K_REVIEW_RANGE_REBUILT`。
+
+## 10 复核裁决（M8）
+
+| 字段 | 含义 | 约束 |
+|---|---|---|
+| `group_key` | 同键冲突组键 | 由 `(meter_id, register, read_at)` 派生的 16 位摘要；不含行号，证据不变则组不变 |
+| `evidence_digest` | 该组候选证据摘要 | 任一候选的行号、原值、折合读数、单位、类型、备注变化即变；变化后旧裁决失效 |
+| `revision` | 同一组内裁决版本 | 从 1 递增；提交时带 `expected_revision`，不一致即 409 `E_STALE_DECISION` |
+| `status` | 裁决状态 | `active` / `superseded`（改判或撤回）/ `invalidated`（证据或源数据变化） |
+| `selected_lineno` | 采信的原始行号 | 必须是该组候选之一；保存后不可原地修改，只能新裁决 |
+| `reason` | 人工核验理由 | 必填，保存后保留；撤回/失效时另记 `invalid_reason` |
+| `usage_before_kwh` / `usage_after_kwh` | 该表该寄存器序列在裁决前后的区间用量 | 便于逐条对看「原隔离 → 复核后」 |
+| `affected` | 受该裁决影响的区间号 | 重建后可追回具体区间 |
+
+复核状态机（`review_runs.status`）：`idle`（未复核）→ `running`（重建中/中断）→ `ready`（已重建）；证据不成立为 `needs_review`，其余异常为 `failed`。失败或中断时上次成功重建的 `reviewed_usage_kwh` 与复核区间不变。
 
 唯一来源：`app/reasons.py`；页面与导出的原因文案都从它取。

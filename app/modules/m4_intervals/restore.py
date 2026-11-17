@@ -23,12 +23,13 @@ def _days(start: str, end: str) -> Decimal:
     return (Decimal((right - left).total_seconds()) / Decimal(86400)).quantize(DAYS_QUANT)
 
 
-def _markers(method: str) -> list[str]:
+def _markers(method: str, endpoint_flags: list[str] | None = None) -> list[str]:
+    flags = list(endpoint_flags or [])
     if method == "rollover":
-        return ["K_ROLLOVER"]
+        flags.append("K_ROLLOVER")
     if method == "replacement_first":
-        return ["K_REPLACEMENT_FIRST"]
-    return []
+        flags.append("K_REPLACEMENT_FIRST")
+    return flags
 
 
 def build_intervals(valid: list[dict], estimates: list[dict],
@@ -62,7 +63,8 @@ def build_intervals(valid: list[dict], estimates: list[dict],
                             seq=seq, meter=meter, register=register, start=start,
                             end=item["read_at"], prev=Decimal("0"),
                             cur=item["reading"], method="replacement_first",
-                            estimates=estimate_index))
+                            estimates=estimate_index,
+                            start_flags=item.get("flags")))
                 continue
             delta, method = rollover.delta_for(last["reading"], item["reading"],
                                                meter.capacity)
@@ -70,7 +72,8 @@ def build_intervals(valid: list[dict], estimates: list[dict],
             intervals.append(_make(
                 seq=seq, meter=meter, register=register, start=last["read_at"],
                 end=item["read_at"], prev=last["reading"], cur=item["reading"],
-                method=method, estimates=estimate_index, delta=delta))
+                method=method, estimates=estimate_index, delta=delta,
+                start_flags=last.get("flags"), end_flags=item.get("flags")))
             last = item
     intervals.sort(key=lambda item: (item["meter_id"], item["register"], item["start_at"]))
     return intervals
@@ -78,13 +81,17 @@ def build_intervals(valid: list[dict], estimates: list[dict],
 
 def _make(*, seq: int, meter: contract_mod.MeterContract, register: str, start: str,
           end: str, prev: Decimal, cur: Decimal, method: str,
-          estimates: dict[tuple, list[str]], delta: Decimal | None = None) -> dict:
+          estimates: dict[tuple, list[str]], delta: Decimal | None = None,
+          start_flags: list[str] | None = None,
+          end_flags: list[str] | None = None) -> dict:
     if delta is None:
         delta = cur - prev
     usage_contract = delta * meter.multiplier
     usage_kwh = units.usage_to_kwh(usage_contract, meter.unit).quantize(
         config.USAGE_QUANT)
-    flags = _markers(method)
+    endpoint_flags = [flag for flag in (start_flags or []) + (end_flags or [])
+                      if flag == "K_CONFLICT_ADJUDICATED"]
+    flags = _markers(method, endpoint_flags)
     for stamp in estimates.get((meter.meter_id, register), []):
         if start < stamp <= end:
             flags.append("K_ESTIMATE_SKIPPED")

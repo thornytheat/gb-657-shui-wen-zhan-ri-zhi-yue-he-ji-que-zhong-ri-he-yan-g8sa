@@ -1,6 +1,6 @@
 # 深度登记 hydrocalendar（水文站日值月合计缺重日核验）
 
-- 规模：中型（7 个功能模块 / 6 个应用页 / 77 条测试）
+- 规模：中型（8 个功能模块 / 6 个应用页 / 101 条测试）
 - 核心规则：站点日值按版本选择而非后写覆盖，零雨与缺测分开；月合计用 Decimal，并以当地自然日日历核对完整度。
 - 使用者与工作流：流域数据员复核多站逐日雨量、缺重日、月合计与相邻站异常。
 
@@ -15,6 +15,7 @@
 | M5 月量计算 | 按版本选择日值并计算月合计与缺日 | POST /api/hydro/monthly、页面 /months | `app/modules/m5_months/hydro.py` `app/modules/m5_months/allocate.py` `app/modules/m5_months/weights.py` | `tests/test_m5_months.py` `tests/test_hydro_rules.py` |
 | M6 批次与对账 | 跑全流程、查批次历史、看四账、失败重试 | POST /api/runs、GET /api/batches、GET /api/reconcile、页面 /batches | `app/modules/m6_batches/service.py` `app/modules/m6_batches/compare.py` `app/modules/m6_batches/history.py` `app/modules/m6_batches/resume.py` | `tests/test_m6_batches.py` |
 | M7 导出 | 导出单一月报与运行证据 | GET /api/export/monthly.csv、页面 /report | `app/modules/m7_export/evidence.py` `app/modules/m7_export/csv_out.py` `app/modules/m7_export/manifest_out.py` | `tests/test_m7_export.py` |
+| M8 按批次复核 | 对同键冲突读数逐组选定候选、写理由、重建复核区间并对照用量 | 页面 /readings、GET/POST /api/batches/{id}/review* | `app/modules/m8_review/service.py` `app/modules/m8_review/handler.py` | `tests/test_m8_review.py` |
 
 端到端：`tests/test_e2e.py`（脏样例 → 六页 200 → 四账 → 导出，含 4xx 失败输入与幂等重跑）。
 不变量：`tests/test_invariants.py`（区间账 = 月度账、幂等重跑行数不变、月桶划分、账单闭合、读数分区）。
@@ -38,6 +39,9 @@
 | TRAP-18 | 0 字节文件、只有表头、数据行全是空行 | 三种都返回「成功导入 0 行」，或直接除零 | 三个文件级原因码分开返回，不落半批数据 | `app/modules/m1_ingest/service.py` | `tests/test_m1_ingest.py::test_empty_states_return_distinct_codes` |
 | TRAP-23 | 区间止点与下一段起点都算一次 | 相邻区间重复计入一天，月度用量偏高 | 区间与月桶都声明左闭右开 `[起, 止)`，相邻段首尾相接 | `app/modules/m5_months/weights.py`、`app/modules/m4_intervals/restore.py` | `tests/test_m5_months.py::test_month_slices_are_half_open`、`tests/test_m4_intervals.py::test_intervals_are_half_open_and_contiguous` |
 | TRAP-24 | 各月/各分量各自四舍五入后合计不等 | 分完差 0.001~0.02，账永远差几分 | 最大余额法分月；分量残差并入最大分量；账单先合计再舍入，分项补差 | `app/modules/m5_months/weights.py`、`app/modules/m5_months/tou.py` | `tests/test_m5_months.py::test_largest_remainder_keeps_total_exact`、`tests/test_m5_months.py::test_tou_components_closed_to_total` |
+| TRAP-25 | 同键冲突读数现场核验后要恢复计量，但原隔离结论是检查证据 | 改原行会抹掉证据；整批重跑会丢人工结论 | 候选快照 + 追加式裁决 + 独立复核区间；原 `quarantine` 与主账不动，裁决降级不删除 | `app/modules/m8_review/service.py`、`app/store.py` | `tests/test_m8_review.py::test_rebuild_keeps_original_batch_and_adds_review_intervals`、`tests/test_m8_review.py::test_rerun_and_force_retry_preserve_manual_decision` |
+| TRAP-26 | 源数据改了以后仍沿用旧裁决 | 静默按旧决定计算，账与输入对不上 | 裁决带输入摘要与该组候选证据摘要，重建前校验；不成立降为 `invalidated` 并要求重新核验 | `app/modules/m8_review/service.py` | `tests/test_m8_review.py::test_source_change_invalidates_decision_and_requires_reverification`、`tests/test_m8_review.py::test_candidate_evidence_change_invalidates_only_that_group` |
+| TRAP-27 | 两名数据员同时改判、或决定保存后进程被杀 | 后写覆盖前一条且不留痕；重试重复计量 | 版本号 + `BEGIN IMMEDIATE` 事务拒绝过期决定（409）；复核区间整批替换、状态先 running 后可续 | `app/store.py`、`app/modules/m8_review/service.py` | `tests/test_m8_review.py::test_concurrent_decisions_reject_the_loser`、`tests/test_m8_review.py::test_failed_rebuild_keeps_last_usage_and_retry_does_not_duplicate` |
 
 ## 对账规则
 
@@ -46,11 +50,21 @@
 - 月度账：同月同表「总表 = 峰 + 平 + 谷」，闭合后的残差必须为 0，闭合前的尾差条数单独计数。
 - 账单账：账单金额 = 分项金额之和（分项先截尾再补分），四账在 `/` 与 `/batches` 页、`/api/reconcile`、运行清单里同源显示。
 
+## 复核边界（M8）
+
+- 原隔离结论不因复核改写：`quarantine` 行号、原值、原因码逐行保留，主 `intervals` / `allocations` / `bills` 仍是「原隔离结论」时的账。
+- 复核只追加：候选快照 `conflict_candidates`、裁决 `conflict_decisions`、复核区间 `review_intervals` 与 `review_runs` 分开存；整批重跑不抹掉人工裁决。
+- 裁决不是「后写覆盖」：改判把旧裁决降为 `superseded`，源数据或该组候选证据变化降为 `invalidated`，两者都保留原理由与用量。
+- 证据失效即重核：重建前比对批次输入摘要与该组候选证据摘要，不成立则拒绝计算并要求重新核验，不静默沿用旧裁决。
+- 并发拒绝过期决定：每条裁决带 `expected_revision`，写入在 `BEGIN IMMEDIATE` 事务里校验版本，过期返回 409 `E_STALE_DECISION`。
+- 中断可恢复、重试不重复：`review_runs.status=running` 表示上次重建被中断，裁决与上次成功用量都在；重建整批替换复核区间，重试沿用同一份裁决，不会翻倍计量。
+
 ## 反例与不变量
 
 - 反例（朴素实现会挂）：`tests/test_m4_intervals.py::test_naive_subtraction_would_drop_rollover`（直接相减得负数，翻转段被丢）、`tests/test_m5_months.py::test_bill_rounding_closed_not_naive`（逐项四舍五入多 1 分）、`tests/test_m1_ingest.py::test_naive_splitlines_would_break_records`（带千分位的单元格被切成两列）。
 - 不变量：`tests/test_invariants.py::test_conservation_intervals_equal_months`（守恒）、`tests/test_invariants.py::test_idempotent_run_keeps_rows`（幂等）、`tests/test_invariants.py::test_month_slices_partition_every_interval`（划分）、`tests/test_invariants.py::test_bill_components_sum_equals_amount`（账单闭合）、`tests/test_invariants.py::test_readings_partition_holds`（分区）。
 - 端到端：`tests/test_e2e.py::test_full_pipeline_over_http`。
+- 复核（M8）：`tests/test_m8_review.py`（候选与原隔离并存、逐条裁决带理由、源数据变化失效、候选证据变化只失效该组、并发只接受一个、HTTP 409、失败保留上次用量、中断可续、重试不重复计量、撤回保留历史）。
 
 ## 已知不覆盖
 
